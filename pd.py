@@ -80,7 +80,7 @@ class Decoder(srd.Decoder):
     def start(self):
         self.bidirectional = True if self.options['bidir'] == 'True' else False
         self.dshot_period = self.dshot_period_lookup[self.options['dshot_rate']]
-        print("start period",self.dshot_period)
+        #print("start period",self.dshot_period)
         self.out_ann = self.register(srd.OUTPUT_ANN)
 
     def metadata(self, key, value):
@@ -90,7 +90,7 @@ class Decoder(srd.Decoder):
     def handle_bits(self, samplenum):
         if len(self.bits) == 16:
             # rgb = (grb & 0xff0000) >> 8 | (grb & 0x00ff00) << 8 | (grb & 0x0000ff)
-            print(self.bits)
+            #print(self.bits)
             throttle = int(reduce(lambda a, b: (a << 1) | b, self.bits[:11]))
             self.put(self.ss_packet, samplenum, self.out_ann,
                      [2, ['%04d' % throttle]])
