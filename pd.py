@@ -106,9 +106,11 @@ class Decoder(srd.Decoder):
             
             # Split annotation based on value type
             if dshot_value < 48:
+                # Command
                 self.put(self.ss_packet, crc_startsample, self.out_ann,
                         [1, ['%04d' % dshot_value]])
             else:
+                # Throttle
                  self.put(self.ss_packet, crc_startsample, self.out_ann,
                         [2, ['%04d' % dshot_value]])
 
