@@ -57,7 +57,7 @@ class Decoder(srd.Decoder):
     )
     annotation_rows = (
         ('bit', 'Bits', (0,)),
-        ('throttle', 'Throttle', (1,2,3)),
+        ('dshot_data', 'DShot Data', (1,2,3)),
         ('dshot_errors', 'Dshot Errors', (4,)),
     )
 
@@ -91,7 +91,7 @@ class Decoder(srd.Decoder):
 
     def handle_bits(self, samplenum):
         if len(self.bits) == 16:
-            throttle = int(reduce(lambda a, b: (a << 1) | b, self.bits[:11]))
+            dshot_value = int(reduce(lambda a, b: (a << 1) | b, self.bits[:11]))
             telem_request = self.bits[11]
             received_crc = int(reduce(lambda a, b: (a << 1) | b, self.bits[12:]))
         
@@ -103,9 +103,15 @@ class Decoder(srd.Decoder):
 
             # TODO: Align this correctly
             crc_startsample = samplenum-(self.actual_period*5)
+            
+            # Split annotation based on value type
+            if dshot_value < 48:
+                self.put(self.ss_packet, crc_startsample, self.out_ann,
+                        [1, ['%04d' % dshot_value]])
+            else:
+                 self.put(self.ss_packet, crc_startsample, self.out_ann,
+                        [2, ['%04d' % dshot_value]])
 
-            self.put(self.ss_packet, crc_startsample, self.out_ann,
-                     [2, ['%04d' % throttle]])
             self.put(crc_startsample, samplenum, self.out_ann, [3, ['Calc CRC: '+('%04d' % calculated_crc)+' TXed CRC:'+('%04d' % received_crc)]])
             if not crc_ok:
                 self.put(crc_startsample, samplenum, self.out_ann,
