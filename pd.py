@@ -51,13 +51,14 @@ class Decoder(srd.Decoder):
         ('bit', 'Bit'),
         ('cmd', 'Command'),
         ('throttle', 'Throttle'),
-        ('dshot_errors', 'Throttle'),
+        ('checksum', 'CRC'),
+        ('errors', 'Errors'),
 
     )
     annotation_rows = (
         ('bit', 'Bits', (0,)),
-        ('throttle', 'Throttle', (1,2,)),
-        ('dshot_errors', 'Dshot Errors', (3,)),
+        ('throttle', 'Throttle', (1,2,3)),
+        ('dshot_errors', 'Dshot Errors', (4,)),
     )
 
     dshot_period_lookup = {'150': 6.67e-6, '300': 3.33e-6,'600':1.67e-6,'1200':0.83e-6}
@@ -75,6 +76,7 @@ class Decoder(srd.Decoder):
         self.inreset = False
         self.bidirectional = False
         self.dshot_period = 3.33e-6
+        self.actual_period = None
         
 
     def start(self):
@@ -89,16 +91,32 @@ class Decoder(srd.Decoder):
 
     def handle_bits(self, samplenum):
         if len(self.bits) == 16:
-            # rgb = (grb & 0xff0000) >> 8 | (grb & 0x00ff00) << 8 | (grb & 0x0000ff)
-            #print(self.bits)
             throttle = int(reduce(lambda a, b: (a << 1) | b, self.bits[:11]))
-            self.put(self.ss_packet, samplenum, self.out_ann,
+            telem_request = self.bits[11]
+            received_crc = int(reduce(lambda a, b: (a << 1) | b, self.bits[12:]))
+        
+            value_tocrc = int(reduce(lambda a, b: (a << 1) | b, self.bits[:12]))
+         
+            calculated_crc = ((~(value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8))) & 0x0F)
+
+            crc_ok = True if value_tocrc == calculated_crc else False
+
+            # TODO: Align this correctly
+            crc_startsample = samplenum-(self.actual_period*5)
+
+            self.put(self.ss_packet, crc_startsample, self.out_ann,
                      [2, ['%04d' % throttle]])
+            self.put(crc_startsample, samplenum, self.out_ann, [3, ['Calc CRC: '+('%04d' % calculated_crc)+' TXed CRC:'+('%04d' % received_crc)]])
+            if not crc_ok:
+                self.put(crc_startsample, samplenum, self.out_ann,
+                     [4, ['CRC INVALID']])
+         
+
             self.bits = []
             self.ss_packet = None
         else:
              self.put(self.es, self.samplenum, self.out_ann,
-                         [1, ['ERROR', 'ERR', 'E']])
+                         [1, ['ERROR: INVALID PACKET LENGTH', 'ERR', 'E']])
 
 
     def handle_bit(self):
@@ -112,6 +130,7 @@ class Decoder(srd.Decoder):
             [0, ['%d' % bit_]])
 
             self.bits.append(bit_)
+            self.actual_period = period
             #self.handle_bits(self.samplenum)
         if self.ss_packet is None:
             self.ss_packet = self.samplenum
