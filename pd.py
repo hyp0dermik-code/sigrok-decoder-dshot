@@ -110,8 +110,11 @@ class Decoder(srd.Decoder):
             received_crc = int(reduce(lambda a, b: (a << 1) | b, bits[12:]))
         
             value_tocrc = int(reduce(lambda a, b: (a << 1) | b, bits[:12]))
-         
-            calculated_crc = int((~(value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8)))&0x0F)
+
+            if self.bidirectional:
+                calculated_crc = int((~(value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8)))&0x0F)
+            else:
+                calculated_crc = int(((value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8)))&0x0F)
 
             if received_crc == calculated_crc:
                 crc_ok = True 
