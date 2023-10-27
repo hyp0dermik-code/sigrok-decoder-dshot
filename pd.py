@@ -56,7 +56,7 @@ class Decoder(srd.Decoder):
 
     )
     annotation_rows = (
-        ('bit', 'Bits', (0,)),
+        ('bits', 'Bits', (0,)),
         ('dshot_data', 'DShot Data', (1,2,3)),
         ('dshot_errors', 'Dshot Errors', (4,)),
     )
@@ -68,20 +68,28 @@ class Decoder(srd.Decoder):
 
     def reset(self):
         self.samplerate = None
-        self.oldpin = None
-        self.ss_packet = None
-        self.ss = None
-        self.es = None
-        self.bits = []
+        # self.oldpin = None
+        # self.ss_packet = None
+        # self.ss = None
+        # self.es = None
+        # self.bits = []
         self.inreset = False
         self.bidirectional = False
         self.dshot_period = 3.33e-6
         self.actual_period = None
+        self.halfbitwidth = None
+        self.currbit_ss = None
+        self.currbit_es = None
+        self.samples_toreset = None
+        self.samples_pp = None
         
 
     def start(self):
         self.bidirectional = True if self.options['bidir'] == 'True' else False
         self.dshot_period = self.dshot_period_lookup[self.options['dshot_rate']]
+        self.samples_pp =  int(self.samplerate*self.dshot_period)
+        self.samples_toreset = self.samples_pp*3
+        # self.halfbitwidth = int((self.samplerate / self.dshot_period) / 2.0)
         #print("start period",self.dshot_period)
         self.out_ann = self.register(srd.OUTPUT_ANN)
 
@@ -89,117 +97,107 @@ class Decoder(srd.Decoder):
         if key == srd.SRD_CONF_SAMPLERATE:
             self.samplerate = value
 
-    def handle_bits(self, samplenum):
-        if len(self.bits) == 16:
-            dshot_value = int(reduce(lambda a, b: (a << 1) | b, self.bits[:11]))
-            telem_request = self.bits[11]
-            received_crc = int(reduce(lambda a, b: (a << 1) | b, self.bits[12:]))
-        
-            value_tocrc = int(reduce(lambda a, b: (a << 1) | b, self.bits[:12]))
-         
-            calculated_crc = ((~(value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8))) & 0x0F)
+    def handle_bits(self, results):
+        #ss, es, bit
+        #print(results)
+        bits = [result[2] for result in results]
+        # print(bits)
 
-            crc_ok = True if value_tocrc == calculated_crc else False
+
+        if len(bits) == 16:
+            dshot_value = int(reduce(lambda a, b: (a << 1) | b, bits[:11]))
+            telem_request = bits[11]
+            received_crc = int(reduce(lambda a, b: (a << 1) | b, bits[12:]))
+        
+            value_tocrc = int(reduce(lambda a, b: (a << 1) | b, bits[:12]))
+
+            if self.bidirectional:
+                calculated_crc = int((~(value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8)))&0x0F)
+            else:
+                calculated_crc = int(((value_tocrc ^ (value_tocrc >> 4) ^ (value_tocrc >> 8)))&0x0F)
+
+            if received_crc == calculated_crc:
+                crc_ok = True 
+            else:
+                crc_ok = False
 
             # TODO: Align this correctly
-            crc_startsample = samplenum-(self.actual_period*5)
+            crc_startsample = results[12][0]
             
             # Split annotation based on value type
             if dshot_value < 48:
                 # Command
-                self.put(self.ss_packet, crc_startsample, self.out_ann,
+                self.put(results[0][0], crc_startsample, self.out_ann,
                         [1, ['%04d' % dshot_value]])
             else:
                 # Throttle
-                 self.put(self.ss_packet, crc_startsample, self.out_ann,
+                 self.put(results[0][0], crc_startsample, self.out_ann,
                         [2, ['%04d' % dshot_value]])
 
-            self.put(crc_startsample, samplenum, self.out_ann, [3, ['Calc CRC: '+('%04d' % calculated_crc)+' TXed CRC:'+('%04d' % received_crc)]])
+            self.put(crc_startsample, results[15][1], self.out_ann, [3, ['Calc CRC: '+('%04d' % calculated_crc)+' TXed CRC:'+('%04d' % received_crc)]])
             if not crc_ok:
-                self.put(crc_startsample, samplenum, self.out_ann,
+                self.put(crc_startsample, results[15][1], self.out_ann,
                      [4, ['CRC INVALID']])
          
 
             self.bits = []
             self.ss_packet = None
         else:
-             self.put(self.es, self.samplenum, self.out_ann,
-                         [1, ['ERROR: INVALID PACKET LENGTH', 'ERR', 'E']])
+            return
+            #  self.put(results[0][0], results[-1::1][1], self.out_ann,
+            #              [1, ['ERROR: INVALID PACKET LENGTH', 'ERR', 'E']])
 
 
-    def handle_bit(self):
-        if self.ss and self.es:
-            period = self.samplenum - self.ss
-            duty = self.es - self.ss
-            # Ideal duty for T0H: 33%, T1H: 66%.
-            bit_ = (duty / period) > 0.5
+    def handle_bit(self, ss, es, nb_ss):
 
-            self.put(self.ss, self.samplenum, self.out_ann,
-            [0, ['%d' % bit_]])
+        period = nb_ss - ss
+        duty = es - ss
+        # Ideal duty for T0H: 33%, T1H: 66%.
+        bit_ = (duty / period) > 0.5
 
-            self.bits.append(bit_)
-            self.actual_period = period
-            #self.handle_bits(self.samplenum)
-        if self.ss_packet is None:
-            self.ss_packet = self.samplenum
-        self.ss = self.samplenum
+        self.put(ss, nb_ss, self.out_ann,
+        [0, ['%d' % bit_]])
+        return [ss,nb_ss,bit_]
 
-    def handle_notbit(self):
-        self.inreset = False
-        self.es = self.samplenum
-
-    def check_reset(self):
-        # Decode last bit value.
-        tH = (self.es - self.ss) / self.samplerate
-        
-        # High if greater than half the period
-        bit_ = True if tH >= (self.dshot_period/2) else False
-
-        self.bits.append(bit_)
-        self.handle_bits(self.es)
-
-        self.put(self.ss, self.es, self.out_ann, [0, ['%d' % bit_]])
-        # self.put(self.es, self.samplenum, self.out_ann,
-        #             [1, ['RESET', 'RST', 'R']])
-
-        self.inreset = True
-        self.bits = []
-        self.ss_packet = None
-        self.ss = None
+    
     def decode(self):
         if not self.samplerate:
             raise SamplerateError('Cannot decode without samplerate.')
-
+        
+        results = []
         while True:
-            # TODO: Come up with more appropriate self.wait() conditions.
-            (pin,) = self.wait()
-
-            if self.oldpin is None:
-                self.oldpin = pin
-                continue
-
-            # Check idle condition if longer is greater than 2x max period
-            # TODO: Confirm this with spec
             if not self.bidirectional:
-                if not self.inreset and not pin and self.es is not None and \
-                    self.ss is not None and \
-                    (self.samplenum - self.es) / self.samplerate > self.dshot_period*2:
-                        self.check_reset()
-                if not self.oldpin and pin:
-                    # Rising edge
-                    self.handle_bit()
-                elif self.oldpin and not pin:
-                    # Falling edge
-                    self.handle_notbit()
+                pins = self.wait([{0: 'r'},{0: 'f'},{'skip':self.samples_toreset}])
             else:
-                if self.oldpin and not pin:
-                        # Falling edge.
-                    self.handle_bit()
-                elif not self.oldpin and pin:
-                             # Rising edge.
-                    self.handle_notbit()
+                pins = self.wait([{0: 'f'},{0: 'r'},{'skip':self.samples_toreset}])
 
-            self.oldpin = pin
+            if self.currbit_ss and self.currbit_es and self.matched[2]:
+                # Assume end of packet if have seen start and end of a potential bit but no further change within 3 periods
+                # TODO: Confirm wait period this works with spec
+                results += [self.handle_bit(self.currbit_ss,self.currbit_es,(self.currbit_ss+self.samples_pp))]
+                self.currbit_ss = None
+                self.currbit_es = None
+
+                # Pass results to decoder
+                self.handle_bits(results)
+                results = []
+        
+
+            if self.matched[0] and not self.currbit_ss and not self.currbit_es:
+                # Start of bit
+                self.currbit_ss = self.samplenum
+            elif self.matched[1] and self.currbit_ss and not self.currbit_es:
+                # End of bit
+                self.currbit_es = self.samplenum
+            elif self.matched[0] and self.currbit_es and self.currbit_ss:
+                # Have complete bit, can handle bit now
+                result = [self.handle_bit(self.currbit_ss,self.currbit_es,self.samplenum)]
+                # print(result)
+                results += result
+                self.currbit_ss = self.samplenum
+                self.currbit_es = None
+            
+             
 
 
 
