@@ -56,7 +56,7 @@ class Decoder(srd.Decoder):
 
     )
     annotation_rows = (
-        ('bit', 'Bits', (0,)),
+        ('bits', 'Bits', (0,)),
         ('dshot_data', 'DShot Data', (1,2,3)),
         ('dshot_errors', 'Dshot Errors', (4,)),
     )
