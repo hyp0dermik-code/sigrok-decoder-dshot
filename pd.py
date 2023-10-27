@@ -159,6 +159,11 @@ class Decoder(srd.Decoder):
         [0, ['%d' % bit_]])
         return [ss,nb_ss,bit_]
 
+    def handle_telem():
+        while True:
+            # break when finished receiving telem
+            break
+        return
     
     def decode(self):
         if not self.samplerate:
@@ -181,6 +186,10 @@ class Decoder(srd.Decoder):
                 # Pass results to decoder
                 self.handle_bits(results)
                 results = []
+
+                if self.bidirectional:
+                    #switch to decoding telem packets
+                    handle_telem()
         
 
             if self.matched[0] and not self.currbit_ss and not self.currbit_es:
@@ -197,7 +206,7 @@ class Decoder(srd.Decoder):
                 self.currbit_ss = self.samplenum
                 self.currbit_es = None
             
-             
+            
 
 
 
