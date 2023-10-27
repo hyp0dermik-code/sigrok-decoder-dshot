@@ -150,8 +150,8 @@ class Decoder(srd.Decoder):
             self.bits = []
             self.ss_packet = None
             if self.bidirectional:
-            #switch to decoding telem packets
-            handle_telem()
+                #switch to decoding telem packets
+                handle_telem()
         else:
             return
             #  self.put(results[0][0], results[-1::1][1], self.out_ann,
