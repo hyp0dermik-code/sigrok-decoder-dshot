@@ -1,5 +1,6 @@
 from functools import reduce
 from enum import Enum
+from .dshot_bits import Sequence
 
 gcr_tables = {
     "0b11001": 0x0,
@@ -53,6 +54,7 @@ class DshotCommon():
         self.crc_ok = False
         self.bits = 0
         self.results = []
+        self.packet = Sequence()
 
     def checkCRC(self,data,crc_recv):
         self.crc_recv = crc_recv

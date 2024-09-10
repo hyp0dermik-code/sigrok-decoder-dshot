@@ -160,6 +160,12 @@ class Decoder(srd.Decoder):
         dshot_value = DshotCmd(self.dshot_cfg)
         telem_value = DshotTelem(self.dshot_cfg)
 
+        last_dshot_value = DshotCmd(self.dshot_cfg)
+        last_telem_value = DshotTelem(self.dshot_cfg)
+
+        max_time_before_telem = 40e-6
+        max_samples_before_telem = int(max_time_before_telem / (1 / self.samplerate))
+
         #bitseq = BitDshot()
         while True:
 
@@ -167,6 +173,8 @@ class Decoder(srd.Decoder):
                 case State.CMD:
                     match self.state_dshot:
                         case State_Dshot.RESET:
+                            if dshot_value.crc_ok:
+                                last_dshot_value = dshot_value
                             dshot_value = DshotCmd(self.dshot_cfg)
                             self.state_dshot = State_Dshot.START
 
@@ -175,6 +183,7 @@ class Decoder(srd.Decoder):
                                 pins = self.wait([{0: 'r'}, {0: 'f'}, {'skip': self.dshot_cfg.samples_after_motorcmd}])
                             else:
                                 pins = self.wait([{0: 'f'}, {0: 'r'}, {'skip': self.dshot_cfg.samples_after_motorcmd}])
+
                             #TODO: Increase skip to maximum time for effiency
                             #TODO: Mark any changes in this time as errors?  Option to reduce load?
 
@@ -194,6 +203,11 @@ class Decoder(srd.Decoder):
                                 result = dshot_value.handle_bits_dshot()
                                 if result:
                                     self.display_dshot(dshot_value)
+                                    self.state_dshot = State_Dshot.RESET
+                                    #TODO: Change??
+                                    dshot_value.packet.es = self.samplenum
+                                else:
+                                    #error, reset
                                     self.state_dshot = State_Dshot.RESET
                                 if result and self.dshot_cfg.bidirectional:
                                     self.state = State.TELEM
@@ -221,10 +235,15 @@ class Decoder(srd.Decoder):
                             self.state_telem = State_Dshot.START
 
                         case State_Dshot.START:
+                            if last_dshot_value.packet.es is not None:
+                                if self.samplenum >= last_dshot_value.packet.es + max_samples_before_telem:
+                                    self.state_telem = State_Dshot.RESET
+                                    self.state = State.CMD
+                                continue
                             # First wait for falling edge (idle high)
                             pins = self.wait([{0: 'f'}])
                             # Save start pulse
-                            tlm_start = self.samplenum
+                            telem_value.packet.ss = self.samplenum
                             # Switch to receiving state
                             self.state_telem = State_Dshot.RECV
                             # TODO: Check if still low after 1/8 bitlength for error det?
